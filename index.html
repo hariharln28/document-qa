@@ -1065,7 +1065,13 @@
 // ─────────────────────────────────────────────────────────────
 //  CONSTANTS
 // ─────────────────────────────────────────────────────────────
-const GEMINI_MODEL  = 'gemini-1.5-flash';
+const CANDIDATE_MODELS = [
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash',
+    'gemini-2.0-flash',
+    'gemini-2.5-flash',
+    'gemini-pro'
+];
 const CHUNK_WORDS   = 350;
 const CHUNK_OVERLAP = 70;
 const TOP_K         = 7;
@@ -1442,32 +1448,56 @@ Question: ${question}
 
 Answer (with inline citations):`;
 
-    const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${S.key}`,
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { temperature: 0.1, maxOutputTokens: 2048, topP: 0.95 },
-                safetySettings: [
-                    { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_NONE' },
-                    { category: 'HARM_CATEGORY_HATE_SPEECH',        threshold: 'BLOCK_NONE' },
-                    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',  threshold: 'BLOCK_NONE' },
-                    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT',  threshold: 'BLOCK_NONE' },
-                ]
-            })
-        }
-    );
+    // Try Candidate Models with fallback across API versions
+    const versions = ['v1beta', 'v1'];
+    let lastError = null;
 
-    if (!res.ok) {
-        const e = await res.json().catch(() => ({}));
-        throw new Error(e.error?.message || `HTTP ${res.status}`);
+    for (const model of CANDIDATE_MODELS) {
+        for (const ver of versions) {
+            try {
+                const res = await fetch(
+                    `https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${S.key}`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            generationConfig: { temperature: 0.1, maxOutputTokens: 2048, topP: 0.95 },
+                            safetySettings: [
+                                { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_NONE' },
+                                { category: 'HARM_CATEGORY_HATE_SPEECH',        threshold: 'BLOCK_NONE' },
+                                { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',  threshold: 'BLOCK_NONE' },
+                                { category: 'HARM_CATEGORY_DANGEROUS_CONTENT',  threshold: 'BLOCK_NONE' },
+                            ]
+                        })
+                    }
+                );
+
+                if (!res.ok) {
+                    const e = await res.json().catch(() => ({}));
+                    const errMsg = e.error?.message || `HTTP ${res.status}`;
+                    // If model not found or unsupported, continue to next candidate
+                    if (errMsg.includes('not found') || errMsg.includes('not supported') || res.status === 404) {
+                        lastError = new Error(errMsg);
+                        continue;
+                    }
+                    throw new Error(errMsg);
+                }
+
+                const data = await res.json();
+                if (!data.candidates?.[0]) throw new Error('Gemini returned no response. The content may have been blocked.');
+                return data.candidates[0].content.parts[0].text;
+            } catch (err) {
+                if (err.message && (err.message.includes('not found') || err.message.includes('not supported') || err.message.includes('404'))) {
+                    lastError = err;
+                    continue;
+                }
+                throw err;
+            }
+        }
     }
 
-    const data = await res.json();
-    if (!data.candidates?.[0]) throw new Error('Gemini returned no response. The content may have been blocked.');
-    return data.candidates[0].content.parts[0].text;
+    throw lastError || new Error('No compatible Gemini model found for this API key.');
 }
 
 // ─────────────────────────────────────────────────────────────
