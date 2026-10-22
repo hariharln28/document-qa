@@ -819,8 +819,8 @@
            TOASTS
         ═══════════════════════════════════ */
         .toast-wrap {
-            position: fixed; top: 66px; right: 18px;
-            z-index: 1000;
+            position: fixed; top: 24px; right: 24px;
+            z-index: 99999;
             display: flex; flex-direction: column; gap: 8px;
         }
         .toast {
@@ -886,6 +886,7 @@
             <input class="input-field" type="password" id="api-key-input" placeholder="AIza..." autocomplete="off" spellcheck="false">
         </div>
         <button class="btn-primary" onclick="saveApiKey()">Start Exploring Documents ✨</button>
+        <button type="button" style="margin-top:10px; width:100%; background:transparent; border:none; color:var(--text-3); cursor:pointer; font-size:12px; padding:6px; text-decoration:underline;" onclick="skipApiKey()">Skip for now &amp; explore UI →</button>
         <div class="note-box">
             🔒 Your API key is stored only in your browser's localStorage and sent exclusively to Google's Gemini API. It is never transmitted anywhere else.
         </div>
@@ -1117,12 +1118,16 @@ const S = {
 // ─────────────────────────────────────────────────────────────
 function saveApiKey() {
     const raw = document.getElementById('api-key-input').value.trim();
-    if (!raw) return toast('Please enter your API key.', 'error');
-    if (!raw.startsWith('AIza')) return toast('Key should start with "AIza…"', 'error');
+    if (!raw) return toast('Please enter your Gemini API key.', 'error');
     S.key = raw;
     localStorage.setItem(LS_KEY, raw);
     document.getElementById('modal-overlay').classList.add('hidden');
     toast('Connected to Gemini! Upload documents to begin.', 'success');
+}
+
+function skipApiKey() {
+    document.getElementById('modal-overlay').classList.add('hidden');
+    toast('Preview mode active. Add your Gemini key anytime using the 🔑 button in the top right.', 'info');
 }
 
 function openApiModal() {
