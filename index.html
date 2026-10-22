@@ -1448,7 +1448,65 @@ Question: ${question}
 
 Answer (with inline citations):`;
 
-    // Try Candidate Models with fallback across API versions
+    const payload = {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 2048, topP: 0.95 },
+        safetySettings: [
+            { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH',        threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',  threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT',  threshold: 'BLOCK_NONE' },
+        ]
+    };
+
+    // 1. First, dynamically fetch the list of models supported by this specific API key
+    try {
+        const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${S.key}`);
+        if (listRes.ok) {
+            const listData = await listRes.json();
+            const available = (listData.models || [])
+                .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+                .map(m => m.name.replace(/^models\//, ''));
+
+            // Sort to prioritize flash models, then pro models
+            const prioritized = [
+                ...available.filter(m => m.includes('flash')),
+                ...available.filter(m => !m.includes('flash'))
+            ];
+
+            for (const model of prioritized) {
+                for (const ver of ['v1beta', 'v1']) {
+                    try {
+                        const res = await fetch(
+                            `https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${S.key}`,
+                            {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            }
+                        );
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
+                                return data.candidates[0].content.parts[0].text;
+                            }
+                        }
+                    } catch (_) {}
+                }
+            }
+        } else {
+            const errJson = await listRes.json().catch(() => ({}));
+            if (errJson.error?.message) {
+                throw new Error(`API Key Error: ${errJson.error.message}`);
+            }
+        }
+    } catch (listErr) {
+        if (listErr.message && listErr.message.includes('API Key Error')) {
+            throw listErr;
+        }
+    }
+
+    // 2. Fallback to candidate list if listModels was unreachable
     const versions = ['v1beta', 'v1'];
     let lastError = null;
 
@@ -1460,23 +1518,16 @@ Answer (with inline citations):`;
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            contents: [{ parts: [{ text: prompt }] }],
-                            generationConfig: { temperature: 0.1, maxOutputTokens: 2048, topP: 0.95 },
-                            safetySettings: [
-                                { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_NONE' },
-                                { category: 'HARM_CATEGORY_HATE_SPEECH',        threshold: 'BLOCK_NONE' },
-                                { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',  threshold: 'BLOCK_NONE' },
-                                { category: 'HARM_CATEGORY_DANGEROUS_CONTENT',  threshold: 'BLOCK_NONE' },
-                            ]
-                        })
+                        body: JSON.stringify(payload)
                     }
                 );
 
                 if (!res.ok) {
                     const e = await res.json().catch(() => ({}));
                     const errMsg = e.error?.message || `HTTP ${res.status}`;
-                    // If model not found or unsupported, continue to next candidate
+                    if (errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid')) {
+                        throw new Error('Your API key is invalid or expired. Click the 🔑 button in the top right to paste a valid Google AI Studio key.');
+                    }
                     if (errMsg.includes('not found') || errMsg.includes('not supported') || res.status === 404) {
                         lastError = new Error(errMsg);
                         continue;
@@ -1488,6 +1539,9 @@ Answer (with inline citations):`;
                 if (!data.candidates?.[0]) throw new Error('Gemini returned no response. The content may have been blocked.');
                 return data.candidates[0].content.parts[0].text;
             } catch (err) {
+                if (err.message && (err.message.includes('API key') || err.message.includes('API_KEY_INVALID'))) {
+                    throw err;
+                }
                 if (err.message && (err.message.includes('not found') || err.message.includes('not supported') || err.message.includes('404'))) {
                     lastError = err;
                     continue;
@@ -1497,7 +1551,7 @@ Answer (with inline citations):`;
         }
     }
 
-    throw lastError || new Error('No compatible Gemini model found for this API key.');
+    throw lastError || new Error('No compatible Gemini model found. Please check your API key.');
 }
 
 // ─────────────────────────────────────────────────────────────
